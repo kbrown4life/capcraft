@@ -324,3 +324,49 @@ code { font-family: var(--mono); background: var(--soft); padding: 2px 4px; }
 .swatch.selected { border-color: var(--ink); box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--ink); }
 .inline-reset { padding: 0; color: var(--gold); text-decoration: underline; }
 .identity-note { align-self: center; }
+
+/* Command-center dashboard + franchise accent theming (Phase B.1) */
+.command-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+.dash-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--franchise, var(--strong-line));
+  padding: 16px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.dash-card.span-2 { grid-column: span 2; }
+.dash-card.pending {
+  border: 1px dashed var(--line);
+  border-top: 2px dashed var(--franchise, var(--line));
+  background: transparent;
+}
+.dash-pending { color: var(--muted); font-size: 13px; margin: 0; line-height: 1.4; }
+.dash-stat { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; border-bottom: 1px solid var(--line); padding: 7px 0; }
+.dash-stat:last-child { border-bottom: 0; }
+.dash-stat span { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .07em; }
+.dash-stat strong { font-family: var(--mono); font-size: 18px; }
+.pending-val { color: var(--muted); font-weight: 400; }
+.pending-val em { font-style: normal; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+.dash-franchise { display: flex; align-items: center; gap: 12px; }
+.dash-cats { margin-top: 12px; }
+
+/* Franchise accent: applied ONLY inside the league content area. */
+.franchise-themed .eyebrow { color: var(--franchise, var(--muted)); }
+.franchise-themed .panel { border-top: 2px solid var(--franchise, var(--line)); }
+.franchise-themed .war-math strong { color: var(--franchise, var(--ink)); }
+
+@media (max-width: 900px) {
+  .command-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dash-card.span-2 { grid-column: span 2; }
+}
+@media (max-width: 560px) {
+  .command-grid { grid-template-columns: 1fr; }
+  .dash-card.span-2 { grid-column: span 1; }
+}

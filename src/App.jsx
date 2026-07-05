@@ -595,6 +595,10 @@ function LeagueDetail({ leagueId, userId, setRoute }) {
     (franchise.franchise_owners || []).some((row) => row.user_id === userId && row.active)
   );
 
+  // Accent = the viewing owner's franchise PRIMARY color (all palette primaries
+  // are dark enough to read on the light cards). Secondary stays in the badge.
+  const franchiseAccent = paletteByKey[myFranchise?.primary_color]?.primary || null;
+
   // Patch identity into local state so the UI reflects a save without a refetch.
   const applyIdentity = (franchiseId, next) => {
     setLeague((current) => {
@@ -621,41 +625,70 @@ function LeagueDetail({ leagueId, userId, setRoute }) {
         </nav>
       </aside>
 
-      <div className="league-content">
+      <div
+        className={franchiseAccent ? 'league-content franchise-themed' : 'league-content'}
+        style={franchiseAccent ? { '--franchise': franchiseAccent } : undefined}
+      >
         {tab === 'Overview' && (
           <>
-            <Panel eyebrow="League Overview" title={league.name}>
-              {capacity !== null && filled < capacity && (
-                <div className="next-step">
-                  <strong>Next step:</strong> {filled} of {capacity} franchises filled. Share the league name and password so managers can join.
-                </div>
-              )}
-              {capacity !== null && filled >= capacity && (
-                <div className="next-step">
-                  <strong>Next step:</strong> all {capacity} franchises are in. The startup draft is the next milestone.
-                </div>
-              )}
-              <div className="war-math">
-                <div><span>Status</span><strong>{STATUS_LABELS[league.status] || league.status}</strong></div>
-                <div><span>Franchises</span><strong>{filled}{capacity !== null ? ` / ${capacity}` : ''}</strong></div>
-                <div><span>Founded</span><strong>{foundedYear ?? '—'}</strong></div>
-                {settings && <>
-                  <div><span>Salary Cap</span><strong>{formatMoney(settings.salary_cap_m)}</strong></div>
-                  <div><span>Minimum Salary</span><strong>{formatMoney(settings.minimum_salary_m)}</strong></div>
-                  <div><span>Roster Size</span><strong>{settings.roster_size}</strong></div>
-                  <div><span>Signing Bonus Pool</span><strong>{formatMoney(settings.signing_bonus_pool_m)}</strong></div>
-                  <div><span>Playoff Teams</span><strong>{settings.playoff_teams}</strong></div>
-                  <div><span>Draft Order</span><strong>{settings.draft_order === 'reverse' ? 'Reverse Standings' : 'Lottery'}</strong></div>
-                </>}
+            {capacity !== null && filled < capacity && (
+              <div className="next-step">
+                <strong>Next step:</strong> {filled} of {capacity} franchises filled. Share the league name and password so managers can join.
               </div>
-            </Panel>
-            <Panel eyebrow="Scoring" title="Categories">
-              {categories.length ? (
-                <div className="cat-grid">
-                  {categories.map((cat) => <span key={cat.category_key}>{cat.category_key}</span>)}
+            )}
+            {capacity !== null && filled >= capacity && (
+              <div className="next-step">
+                <strong>Next step:</strong> all {capacity} franchises are in. The startup draft is the next milestone.
+              </div>
+            )}
+
+            <div className="command-grid">
+              <DashCard eyebrow="Your Franchise" className="dash-identity">
+                {myFranchise ? (
+                  <div className="dash-franchise">
+                    <MonogramBadge monogram={myFranchise.monogram} primary={myFranchise.primary_color} secondary={myFranchise.secondary_color} fallback={myFranchise.name} />
+                    <div>
+                      <div className="identity-name">{myFranchise.name}</div>
+                      <button className="text-btn inline-reset" onClick={() => setTab('My Franchise')}>Edit identity →</button>
+                    </div>
+                  </div>
+                ) : <p className="muted">You do not own a franchise in this league.</p>}
+              </DashCard>
+
+              <DashCard eyebrow="Salary Cap">
+                <div className="dash-stat"><span>Cap</span><strong>{settings ? formatMoney(settings.salary_cap_m) : '—'}</strong></div>
+                <div className="dash-stat"><span>Payroll</span><strong className="pending-val">— <em>Phase C</em></strong></div>
+                <div className="dash-stat"><span>Available to Bid</span><strong className="pending-val">— <em>Phase C</em></strong></div>
+              </DashCard>
+
+              <DashCard eyebrow="Roster" pending="Contracts and roster arrive in Phase C.">
+                <div className="dash-stat"><span>Signed</span><strong>0{settings ? ` / ${settings.roster_size}` : ''}</strong></div>
+              </DashCard>
+
+              <DashCard eyebrow="This Week" pending="Matchups arrive with the fantasy engine (Phase 7)." />
+
+              <DashCard eyebrow="League Feed" pending="A live transaction feed arrives in a later phase." />
+
+              <DashCard eyebrow="Standings" pending="Category standings arrive with the fantasy engine (Phase 7).">
+                <div className="dash-stat"><span>Franchises</span><strong>{filled}{capacity !== null ? ` / ${capacity}` : ''}</strong></div>
+              </DashCard>
+
+              <DashCard eyebrow="League Info" className="span-2">
+                <div className="war-math">
+                  <div><span>Status</span><strong>{STATUS_LABELS[league.status] || league.status}</strong></div>
+                  <div><span>Founded</span><strong>{foundedYear ?? '—'}</strong></div>
+                  <div><span>Draft Order</span><strong>{settings?.draft_order === 'reverse' ? 'Reverse' : 'Lottery'}</strong></div>
+                  <div><span>Minimum Salary</span><strong>{settings ? formatMoney(settings.minimum_salary_m) : '—'}</strong></div>
+                  <div><span>Bonus Pool</span><strong>{settings ? formatMoney(settings.signing_bonus_pool_m) : '—'}</strong></div>
+                  <div><span>Playoff Teams</span><strong>{settings?.playoff_teams ?? '—'}</strong></div>
                 </div>
-              ) : <p className="muted">No categories configured.</p>}
-            </Panel>
+                {categories.length > 0 && (
+                  <div className="cat-grid dash-cats">
+                    {categories.map((cat) => <span key={cat.category_key}>{cat.category_key}</span>)}
+                  </div>
+                )}
+              </DashCard>
+            </div>
           </>
         )}
 
@@ -789,5 +822,16 @@ function MyFranchise({ franchise, onSaved }) {
         </div>
       </div>
     </Panel>
+  );
+}
+
+function DashCard({ eyebrow, children, pending, className = '' }) {
+  const isEmpty = pending && !children;
+  return (
+    <section className={`dash-card ${isEmpty ? 'pending' : ''} ${className}`.trim()}>
+      {eyebrow && <div className="eyebrow">{eyebrow}</div>}
+      {children}
+      {pending && <p className="dash-pending">{pending}</p>}
+    </section>
   );
 }
