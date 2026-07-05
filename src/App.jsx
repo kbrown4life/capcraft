@@ -33,6 +33,12 @@ export default function App() {
   const [message, setMessage] = useState('');
   const [leagues, setLeagues] = useState([]);
   const [profileMissing, setProfileMissing] = useState(false);
+  const [activeLeagueId, setActiveLeagueId] = useState(null);
+
+  const openLeague = (id) => {
+    setActiveLeagueId(id);
+    setRoute('League');
+  };
 
   const user = profile;
   const isSignedIn = Boolean(session?.user);
@@ -97,7 +103,8 @@ export default function App() {
         {profileMissing && route !== 'Finish Profile' && isSignedIn && <ProfileBanner setRoute={setRoute} />}
         {route === 'Create League' && <CreateLeague user={user} isSignedIn={isSignedIn} setRoute={setRoute} setMessage={setMessage} />}
         {route === 'Join League' && <JoinLeague user={user} isSignedIn={isSignedIn} setRoute={setRoute} setMessage={setMessage} />}
-        {route === 'Dashboard' && <Dashboard user={user} isSignedIn={isSignedIn} leagues={leagues} setRoute={setRoute} />}
+        {route === 'Dashboard' && <Dashboard user={user} isSignedIn={isSignedIn} leagues={leagues} setRoute={setRoute} openLeague={openLeague} />}
+        {route === 'League' && <LeagueDetail leagueId={activeLeagueId} setRoute={setRoute} />}
       </Shell>
     </>
   );
@@ -462,7 +469,7 @@ function FinishProfile({ session, setProfile, setProfileMissing, setRoute, setMe
   </Panel></div>;
 }
 
-function Dashboard({ user, isSignedIn, leagues, setRoute }) {
+function Dashboard({ user, isSignedIn, leagues, setRoute, openLeague }) {
   return (
     <div className="dashboard-grid">
       <Panel eyebrow="GM Profile" title={user ? user.display_name || user.username : 'Not signed in'}>
@@ -472,7 +479,7 @@ function Dashboard({ user, isSignedIn, leagues, setRoute }) {
         </> : <Gate title="Dashboard" setRoute={setRoute} isSignedIn={isSignedIn} />}
       </Panel>
       <Panel eyebrow="My Leagues" title="Commissioner office">
-        {leagues.length ? leagues.map((league) => <div className="league-row" key={league.id}><strong>{league.name}</strong><StatusPill>{league.slug}</StatusPill></div>) : <p className="muted">No connected leagues yet. Create or join one to replace this empty state.</p>}
+        {leagues.length ? leagues.map((league) => <button className="league-row league-row-btn" key={league.id} onClick={() => openLeague(league.id)}><strong>{league.name}</strong><StatusPill>Open →</StatusPill></button>) : <p className="muted">No connected leagues yet. Create or join one to replace this empty state.</p>}
       </Panel>
       <Panel eyebrow="Preview" title="League Feed Framework">
         <FeedList items={demoFeed} />
@@ -480,6 +487,180 @@ function Dashboard({ user, isSignedIn, leagues, setRoute }) {
       <Panel eyebrow="Preview" title="Standings Component">
         <StandingsTable rows={demoStandings} />
       </Panel>
+    </div>
+  );
+}
+
+const LEAGUE_NAV = ['Overview', 'My Franchise', 'Standings', 'Schedule', 'League Feed', 'Members', 'History', 'Settings'];
+
+const STATUS_LABELS = {
+  setup: 'Setup',
+  startup_draft: 'Startup Draft',
+  in_season: 'In Season',
+  offseason: 'Offseason',
+  archived: 'Archived'
+};
+
+// Which roadmap phase delivers each not-yet-built tab. Keeps stubs honest.
+const TAB_PHASE_NOTE = {
+  'My Franchise': 'Franchise identity — colors, monogram, roster — arrives in Phase B.',
+  Standings: 'Category standings render once the fantasy engine lands (Phase 7).',
+  Schedule: 'Weekly matchup scheduling is part of the fantasy engine (Phase 7).',
+  'League Feed': 'A live feed reads from audit logs and notifications in a later phase.',
+  History: 'Permanent league and franchise history is Phase 6.',
+  Settings: 'Commissioner settings and rule edits come with the invite/admin phase.'
+};
+
+function LeagueDetail({ leagueId, setRoute }) {
+  const [tab, setTab] = useState('Overview');
+  const [league, setLeague] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      if (!isSupabaseConfigured || !leagueId) {
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      setError('');
+      const { data, error: loadError } = await supabase
+        .from('leagues')
+        .select(`
+          id, name, slug, status, created_at,
+          league_settings ( number_of_teams, salary_cap_m, minimum_salary_m, roster_size, signing_bonus_pool_m, buyout_percent, playoff_teams, draft_order ),
+          league_categories ( category_key, sort_order ),
+          franchises ( id, name, abbreviation, founded_season, franchise_owners ( role, active, user_id, profiles ( username, display_name ) ) )
+        `)
+        .eq('id', leagueId)
+        .maybeSingle();
+      if (cancelled) return;
+      if (loadError) {
+        setError(loadError.message);
+      } else if (!data) {
+        setError('League not found, or you are not a member of it.');
+      } else {
+        setLeague(data);
+      }
+      setLoading(false);
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [leagueId]);
+
+  if (!isSupabaseConfigured) {
+    return <div className="auth-wrap"><Panel eyebrow="League" title="Connect Supabase to view leagues">
+      <p className="muted">League detail loads a real league from the database. Add Supabase keys to <code>.env.local</code> to enable it.</p>
+      <SecondaryButton onClick={() => setRoute('Dashboard')}>Back to Dashboard</SecondaryButton>
+    </Panel></div>;
+  }
+
+  if (loading) {
+    return <div className="auth-wrap"><Panel eyebrow="League" title="Loading league…"><p className="muted">Fetching league, settings, and members.</p></Panel></div>;
+  }
+
+  if (error || !league) {
+    return <div className="auth-wrap"><Panel eyebrow="League" title="Could not open league">
+      <p className="muted">{error || 'Something went wrong.'}</p>
+      <SecondaryButton onClick={() => setRoute('Dashboard')}>Back to Dashboard</SecondaryButton>
+    </Panel></div>;
+  }
+
+  const settings = Array.isArray(league.league_settings) ? league.league_settings[0] : league.league_settings;
+  const categories = [...(league.league_categories || [])].sort((a, b) => a.sort_order - b.sort_order);
+  const franchises = league.franchises || [];
+  const capacity = settings?.number_of_teams ?? null;
+  const filled = franchises.length;
+  const foundedYear = league.created_at ? new Date(league.created_at).getFullYear() : null;
+
+  const members = franchises.map((franchise) => {
+    const owner = (franchise.franchise_owners || []).find((row) => row.active) || (franchise.franchise_owners || [])[0];
+    const profile = owner?.profiles;
+    return {
+      franchiseId: franchise.id,
+      franchiseName: franchise.name,
+      gm: profile?.display_name || profile?.username || 'Unknown GM',
+      username: profile?.username,
+      role: owner?.role || 'owner'
+    };
+  });
+
+  return (
+    <div className="league-shell">
+      <aside className="league-nav">
+        <button className="text-btn league-back" onClick={() => setRoute('Dashboard')}>← All Leagues</button>
+        <div className="league-nav-title">{league.name}</div>
+        <StatusPill>{STATUS_LABELS[league.status] || league.status}</StatusPill>
+        <nav className="league-nav-links">
+          {LEAGUE_NAV.map((item) => (
+            <button key={item} className={tab === item ? 'league-nav-link active' : 'league-nav-link'} onClick={() => setTab(item)}>{item}</button>
+          ))}
+        </nav>
+      </aside>
+
+      <div className="league-content">
+        {tab === 'Overview' && (
+          <>
+            <Panel eyebrow="League Overview" title={league.name}>
+              {capacity !== null && filled < capacity && (
+                <div className="next-step">
+                  <strong>Next step:</strong> {filled} of {capacity} franchises filled. Share the league name and password so managers can join.
+                </div>
+              )}
+              {capacity !== null && filled >= capacity && (
+                <div className="next-step">
+                  <strong>Next step:</strong> all {capacity} franchises are in. The startup draft is the next milestone.
+                </div>
+              )}
+              <div className="war-math">
+                <div><span>Status</span><strong>{STATUS_LABELS[league.status] || league.status}</strong></div>
+                <div><span>Franchises</span><strong>{filled}{capacity !== null ? ` / ${capacity}` : ''}</strong></div>
+                <div><span>Founded</span><strong>{foundedYear ?? '—'}</strong></div>
+                {settings && <>
+                  <div><span>Salary Cap</span><strong>{formatMoney(settings.salary_cap_m)}</strong></div>
+                  <div><span>Minimum Salary</span><strong>{formatMoney(settings.minimum_salary_m)}</strong></div>
+                  <div><span>Roster Size</span><strong>{settings.roster_size}</strong></div>
+                  <div><span>Signing Bonus Pool</span><strong>{formatMoney(settings.signing_bonus_pool_m)}</strong></div>
+                  <div><span>Playoff Teams</span><strong>{settings.playoff_teams}</strong></div>
+                  <div><span>Draft Order</span><strong>{settings.draft_order === 'reverse' ? 'Reverse Standings' : 'Lottery'}</strong></div>
+                </>}
+              </div>
+            </Panel>
+            <Panel eyebrow="Scoring" title="Categories">
+              {categories.length ? (
+                <div className="cat-grid">
+                  {categories.map((cat) => <span key={cat.category_key}>{cat.category_key}</span>)}
+                </div>
+              ) : <p className="muted">No categories configured.</p>}
+            </Panel>
+          </>
+        )}
+
+        {tab === 'Members' && (
+          <Panel eyebrow="League" title={`Members (${members.length})`}>
+            <table className="data-table members-table">
+              <thead><tr><th>Franchise</th><th>GM</th><th>Role</th></tr></thead>
+              <tbody>
+                {members.map((member) => (
+                  <tr key={member.franchiseId}>
+                    <td><strong>{member.franchiseName}</strong></td>
+                    <td>{member.gm}{member.username ? <span className="muted"> · @{member.username}</span> : null}</td>
+                    <td>{member.role === 'commissioner' ? 'Commissioner' : member.role === 'co_owner' ? 'Co-owner' : 'Owner'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Panel>
+        )}
+
+        {TAB_PHASE_NOTE[tab] && (
+          <Panel eyebrow={tab} title={`${tab} — coming soon`}>
+            <p className="muted">{TAB_PHASE_NOTE[tab]}</p>
+          </Panel>
+        )}
+      </div>
     </div>
   );
 }
