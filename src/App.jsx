@@ -5,6 +5,7 @@ import { Field, PrimaryButton, SecondaryButton, SelectField } from './components
 import { FeedList, StandingsTable } from './components/Tables';
 import { demoFeed, demoStandings, defaultCategories, optionalCategories, categoryLabels } from './data/demo';
 import { formatMoney } from './lib/money';
+import { PALETTE, paletteByKey, autoMonogram } from './lib/palette';
 
 
 async function hashLeaguePassword(leagueName, password) {
@@ -104,7 +105,7 @@ export default function App() {
         {route === 'Create League' && <CreateLeague user={user} isSignedIn={isSignedIn} setRoute={setRoute} setMessage={setMessage} />}
         {route === 'Join League' && <JoinLeague user={user} isSignedIn={isSignedIn} setRoute={setRoute} setMessage={setMessage} />}
         {route === 'Dashboard' && <Dashboard user={user} isSignedIn={isSignedIn} leagues={leagues} setRoute={setRoute} openLeague={openLeague} />}
-        {route === 'League' && <LeagueDetail leagueId={activeLeagueId} setRoute={setRoute} />}
+        {route === 'League' && <LeagueDetail leagueId={activeLeagueId} userId={session?.user?.id} setRoute={setRoute} />}
       </Shell>
     </>
   );
@@ -503,7 +504,6 @@ const STATUS_LABELS = {
 
 // Which roadmap phase delivers each not-yet-built tab. Keeps stubs honest.
 const TAB_PHASE_NOTE = {
-  'My Franchise': 'Franchise identity — colors, monogram, roster — arrives in Phase B.',
   Standings: 'Category standings render once the fantasy engine lands (Phase 7).',
   Schedule: 'Weekly matchup scheduling is part of the fantasy engine (Phase 7).',
   'League Feed': 'A live feed reads from audit logs and notifications in a later phase.',
@@ -511,7 +511,7 @@ const TAB_PHASE_NOTE = {
   Settings: 'Commissioner settings and rule edits come with the invite/admin phase.'
 };
 
-function LeagueDetail({ leagueId, setRoute }) {
+function LeagueDetail({ leagueId, userId, setRoute }) {
   const [tab, setTab] = useState('Overview');
   const [league, setLeague] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -583,9 +583,30 @@ function LeagueDetail({ leagueId, setRoute }) {
       franchiseName: franchise.name,
       gm: profile?.display_name || profile?.username || 'Unknown GM',
       username: profile?.username,
-      role: owner?.role || 'owner'
+      role: owner?.role || 'owner',
+      primaryColor: franchise.primary_color,
+      secondaryColor: franchise.secondary_color,
+      monogram: franchise.monogram,
+      userId: owner?.user_id
     };
   });
+
+  const myFranchise = franchises.find((franchise) =>
+    (franchise.franchise_owners || []).some((row) => row.user_id === userId && row.active)
+  );
+
+  // Patch identity into local state so the UI reflects a save without a refetch.
+  const applyIdentity = (franchiseId, next) => {
+    setLeague((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        franchises: (current.franchises || []).map((f) =>
+          f.id === franchiseId ? { ...f, ...next } : f
+        )
+      };
+    });
+  };
 
   return (
     <div className="league-shell">
@@ -638,6 +659,12 @@ function LeagueDetail({ leagueId, setRoute }) {
           </>
         )}
 
+        {tab === 'My Franchise' && (
+          myFranchise
+            ? <MyFranchise franchise={myFranchise} onSaved={(next) => applyIdentity(myFranchise.id, next)} />
+            : <Panel eyebrow="My Franchise" title="No franchise here"><p className="muted">You do not own a franchise in this league.</p></Panel>
+        )}
+
         {tab === 'Members' && (
           <Panel eyebrow="League" title={`Members (${members.length})`}>
             <table className="data-table members-table">
@@ -645,7 +672,12 @@ function LeagueDetail({ leagueId, setRoute }) {
               <tbody>
                 {members.map((member) => (
                   <tr key={member.franchiseId}>
-                    <td><strong>{member.franchiseName}</strong></td>
+                    <td>
+                      <div className="member-franchise">
+                        <MonogramBadge monogram={member.monogram} primary={member.primaryColor} secondary={member.secondaryColor} fallback={member.franchiseName} small />
+                        <strong>{member.franchiseName}</strong>
+                      </div>
+                    </td>
                     <td>{member.gm}{member.username ? <span className="muted"> · @{member.username}</span> : null}</td>
                     <td>{member.role === 'commissioner' ? 'Commissioner' : member.role === 'co_owner' ? 'Co-owner' : 'Owner'}</td>
                   </tr>
@@ -662,5 +694,100 @@ function LeagueDetail({ leagueId, setRoute }) {
         )}
       </div>
     </div>
+  );
+}
+
+function MonogramBadge({ monogram, primary, secondary, fallback, small }) {
+  const bg = paletteByKey[primary]?.primary || '#e6e0d2';
+  const fg = paletteByKey[secondary]?.primary || '#6d6a60';
+  const text = monogram || autoMonogram(fallback || 'X');
+  return (
+    <span className={small ? 'monogram-badge small' : 'monogram-badge'} style={{ background: bg, color: fg }}>{text}</span>
+  );
+}
+
+function SwatchRow({ label, value, onChange }) {
+  return (
+    <div className="swatch-row">
+      <span className="swatch-label">{label}</span>
+      <div className="swatch-grid">
+        {PALETTE.map((color) => (
+          <button
+            key={color.key}
+            type="button"
+            className={value === color.key ? 'swatch selected' : 'swatch'}
+            style={{ background: color.primary }}
+            onClick={() => onChange(color.key)}
+            title={color.name}
+            aria-label={color.name}
+          >{value === color.key ? '✓' : ''}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MyFranchise({ franchise, onSaved }) {
+  const autoMono = autoMonogram(franchise.name);
+  const [primary, setPrimary] = useState(franchise.primary_color || 'forest');
+  const [secondary, setSecondary] = useState(franchise.secondary_color || 'gold');
+  const [monogram, setMonogram] = useState(franchise.monogram || autoMono);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState('');
+
+  const dirty =
+    (franchise.primary_color || 'forest') !== primary ||
+    (franchise.secondary_color || 'gold') !== secondary ||
+    (franchise.monogram || autoMono) !== monogram;
+
+  const save = async () => {
+    setBusy(true);
+    setNote('');
+    try {
+      const clean = monogram.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 3);
+      if (!clean) throw new Error('Monogram needs at least one letter or number.');
+      const { error } = await supabase.rpc('update_franchise_identity', {
+        p_franchise_id: franchise.id,
+        p_primary_color: primary,
+        p_secondary_color: secondary,
+        p_monogram: clean
+      });
+      if (error) throw error;
+      setMonogram(clean);
+      setNote('Saved.');
+      onSaved({ primary_color: primary, secondary_color: secondary, monogram: clean });
+    } catch (error) {
+      setNote(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Panel eyebrow="My Franchise" title={franchise.name}>
+      <div className="franchise-identity">
+        <div className="identity-preview">
+          <MonogramBadge monogram={monogram} primary={primary} secondary={secondary} fallback={franchise.name} />
+          <div>
+            <div className="identity-name">{franchise.name}</div>
+            <div className="muted">Live preview</div>
+          </div>
+        </div>
+
+        <SwatchRow label="Primary Color" value={primary} onChange={setPrimary} />
+        <SwatchRow label="Secondary Color" value={secondary} onChange={setSecondary} />
+
+        <label className="field">
+          <span>Monogram</span>
+          <input value={monogram} maxLength={3} onChange={(e) => setMonogram(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))} />
+          <small>1–3 letters or numbers. Auto-filled from your franchise name — edit if you like. <button type="button" className="text-btn inline-reset" onClick={() => setMonogram(autoMono)}>Reset to auto</button></small>
+        </label>
+
+        <div className="button-row">
+          <PrimaryButton onClick={save} disabled={busy || !dirty}>{busy ? 'Saving…' : 'Save Identity'}</PrimaryButton>
+          {note && <span className="muted identity-note">{note}</span>}
+        </div>
+      </div>
+    </Panel>
   );
 }
