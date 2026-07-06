@@ -397,3 +397,19 @@ code { font-family: var(--mono); background: var(--soft); padding: 2px 4px; }
   .warroom-cap-grid { grid-template-columns: repeat(2, 1fr); }
   .player-main { flex-direction: column; align-items: flex-start; gap: 6px; }
 }
+
+/* War Room player states (blind-safe color coding) */
+.warroom-legend { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 12px; font-size: 12px; }
+.legend-item { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.legend-item::before { content: ''; width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.legend-mine::before { background: #0f6b3f; }
+.legend-bidding::before { background: #c9a24b; }
+.legend-active::before { background: #b4531f; }
+.legend-rostered::before { background: #9a958a; }
+
+.player-row { border-left: 3px solid transparent; padding-left: 10px; }
+.player-row.state-mine { border-left-color: #0f6b3f; background: #f2f8f4; }
+.player-row.state-bidding { border-left-color: #c9a24b; background: #fdfaf0; }
+.player-row.state-active { border-left-color: #b4531f; background: #fdf5f0; }
+.player-row.state-rostered { border-left-color: #9a958a; opacity: .62; }
+.player-row.state-available { border-left-color: transparent; }

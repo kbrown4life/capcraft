@@ -856,6 +856,7 @@ function WarRoom({ leagueId, franchise, minSalary }) {
   const [players, setPlayers] = useState([]);
   const [auctions, setAuctions] = useState({});
   const [myOffers, setMyOffers] = useState({});
+  const [rostered, setRostered] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [bidFor, setBidFor] = useState(null);
@@ -866,11 +867,12 @@ function WarRoom({ leagueId, franchise, minSalary }) {
 
   async function load() {
     setError('');
-    const [capRes, playersRes, auctionsRes, offersRes] = await Promise.all([
+    const [capRes, playersRes, auctionsRes, offersRes, contractsRes] = await Promise.all([
       supabase.rpc('can_afford', { p_franchise_id: franchise.id, p_offer_salary: minSalary, p_offer_length: 1 }),
       supabase.from('players').select('id, full_name, positions').order('full_name'),
       supabase.from('auctions').select('id, player_id, status, ends_at, phase').eq('league_id', leagueId).neq('status', 'closed'),
-      supabase.from('contract_offers').select('id, player_id, offer_salary_m, offer_length_years').eq('franchise_id', franchise.id).eq('status', 'pending')
+      supabase.from('contract_offers').select('id, player_id, offer_salary_m, offer_length_years').eq('franchise_id', franchise.id).eq('status', 'pending'),
+      supabase.from('contracts').select('player_id, franchise_id').eq('league_id', leagueId).eq('status', 'active')
     ]);
 
     if (capRes.error) setError(capRes.error.message);
@@ -882,6 +884,9 @@ function WarRoom({ leagueId, franchise, minSalary }) {
     const oMap = {};
     (offersRes.data || []).forEach((o) => { oMap[o.player_id] = o; });
     setMyOffers(oMap);
+    const rMap = {};
+    (contractsRes.data || []).forEach((c) => { rMap[c.player_id] = c.franchise_id; });
+    setRostered(rMap);
     setLoading(false);
   }
 
@@ -945,28 +950,50 @@ function WarRoom({ leagueId, franchise, minSalary }) {
 
       {error && <div className="warroom-error">{error}</div>}
 
-      <Panel eyebrow="Players" title="Available to bid">
+      <div className="warroom-legend">
+        <span className="legend-item legend-mine">On your roster</span>
+        <span className="legend-item legend-bidding">Your bid in</span>
+        <span className="legend-item legend-active">Auction live</span>
+        <span className="legend-item legend-rostered">On another team</span>
+      </div>
+
+      <Panel eyebrow="Players" title="Player pool">
         <div className="player-list">
           {players.map((player) => {
             const offer = myOffers[player.id];
             const auction = auctions[player.id];
             const isOpen = bidFor === player.id;
+            const rosterHolder = rostered[player.id];
+            const mineRostered = rosterHolder && rosterHolder === franchise.id;
+            const otherRostered = rosterHolder && rosterHolder !== franchise.id;
+
+            // Blind-safe state precedence.
+            let state = 'available';
+            if (mineRostered) state = 'mine';
+            else if (otherRostered) state = 'rostered';
+            else if (offer) state = 'bidding';
+            else if (auction) state = 'active';
+
+            const total = (Number(bidSalary) || 0) * (Number(bidLength) || 0);
+
             return (
-              <div className="player-row" key={player.id}>
+              <div className={`player-row state-${state}`} key={player.id}>
                 <div className="player-main">
                   <div className="player-name">
                     <strong>{player.full_name}</strong>
                     <span className="player-pos">{(player.positions || []).join(' / ')}</span>
                   </div>
                   <div className="player-state">
-                    {offer && <span className="my-bid">Your bid: ${Number(offer.offer_salary_m).toFixed(1)}m · {offer.offer_length_years}yr</span>}
-                    {auction && <span className="auction-timer">{fmtRemaining(auction.ends_at, now)}</span>}
-                    <button className="text-btn" onClick={() => (isOpen ? setBidFor(null) : openBid(player))}>{offer ? 'Raise' : 'Bid'}</button>
+                    {offer && <span className="my-bid">Your bid: ${Number(offer.offer_salary_m).toFixed(1)}m/yr · ${(Number(offer.offer_salary_m) * offer.offer_length_years).toFixed(1)}m total · {offer.offer_length_years}yr</span>}
+                    {mineRostered && <span className="my-bid">On your roster</span>}
+                    {otherRostered && <span className="muted">Signed elsewhere</span>}
+                    {auction && !rosterHolder && <span className="auction-timer">{fmtRemaining(auction.ends_at, now)}</span>}
+                    {!rosterHolder && <button className="text-btn" onClick={() => (isOpen ? setBidFor(null) : openBid(player))}>{offer ? 'Raise' : 'Bid'}</button>}
                   </div>
                 </div>
-                {isOpen && (
+                {isOpen && !rosterHolder && (
                   <div className="bid-form">
-                    <Field label="Salary ($m)" type="number" value={bidSalary} onChange={setBidSalary} />
+                    <Field label="Annual salary ($m)" type="number" value={bidSalary} onChange={setBidSalary} helper={`Cap hit each year. Total value: $${total.toFixed(1)}m over ${bidLength}yr`} />
                     <SelectField label="Years" value={bidLength} onChange={setBidLength}>
                       <option value="1">1</option>
                       <option value="2">2</option>
