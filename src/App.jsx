@@ -1004,6 +1004,7 @@ function WarRoom({ leagueId, franchise, minSalary, isCommissioner }) {
               <PrimaryButton onClick={() => submitBid(player.id)} disabled={busy}>{busy ? 'Placing…' : 'Place Bid'}</PrimaryButton>
               <SecondaryButton onClick={() => setBidFor(null)}>Cancel</SecondaryButton>
             </div>
+            {error && <div className="bid-error">{error}</div>}
           </div>
         )}
       </div>

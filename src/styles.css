@@ -419,3 +419,5 @@ code { font-family: var(--mono); background: var(--soft); padding: 2px 4px; }
 .resolve-btn { color: var(--franchise, var(--ink)); border: 1px solid var(--line); padding: 5px 10px; }
 .resolve-btn:hover { background: var(--soft); }
 .warroom-notice { border: 1px solid #0f6b3f; background: #f2f8f4; color: #0f6b3f; padding: 10px 12px; margin-bottom: 14px; font-size: 14px; }
+
+.bid-error { flex-basis: 100%; color: #8c2b2b; background: #fff5f5; border: 1px solid #8c2b2b; padding: 8px 10px; font-size: 13px; margin-top: 4px; }
