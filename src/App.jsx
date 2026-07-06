@@ -844,7 +844,7 @@ function DashCard({ eyebrow, children, pending, className = '' }) {
 
 function fmtRemaining(endsAt, now) {
   const ms = new Date(endsAt).getTime() - now;
-  if (ms <= 0) return 'ended';
+  if (ms <= 0) return 'awaiting resolution';
   const h = Math.floor(ms / 3600000);
   const m = Math.floor((ms % 3600000) / 60000);
   if (h >= 1) return `${h}h ${m}m left`;
