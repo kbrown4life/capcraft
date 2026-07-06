@@ -529,7 +529,7 @@ function LeagueDetail({ leagueId, userId, setRoute }) {
       const { data, error: loadError } = await supabase
         .from('leagues')
         .select(`
-          id, name, slug, status, created_at,
+          id, name, slug, status, created_at, commissioner_id,
           league_settings ( number_of_teams, salary_cap_m, minimum_salary_m, roster_size, signing_bonus_pool_m, buyout_percent, playoff_teams, draft_order ),
           league_categories ( category_key, sort_order ),
           franchises ( id, name, abbreviation, founded_season, franchise_owners ( role, active, user_id, profiles ( username, display_name ) ) )
@@ -700,7 +700,7 @@ function LeagueDetail({ leagueId, userId, setRoute }) {
 
         {tab === 'War Room' && (
           myFranchise
-            ? <WarRoom leagueId={league.id} franchise={myFranchise} minSalary={settings ? Number(settings.minimum_salary_m) : 2.5} />
+            ? <WarRoom leagueId={league.id} franchise={myFranchise} minSalary={settings ? Number(settings.minimum_salary_m) : 2.5} isCommissioner={league.commissioner_id === userId} />
             : <Panel eyebrow="War Room" title="No franchise here"><p className="muted">You need a franchise in this league to bid.</p></Panel>
         )}
 
@@ -851,7 +851,7 @@ function fmtRemaining(endsAt, now) {
   return `${m}m left`;
 }
 
-function WarRoom({ leagueId, franchise, minSalary }) {
+function WarRoom({ leagueId, franchise, minSalary, isCommissioner }) {
   const [cap, setCap] = useState(null);
   const [players, setPlayers] = useState([]);
   const [auctions, setAuctions] = useState({});
@@ -863,6 +863,7 @@ function WarRoom({ leagueId, franchise, minSalary }) {
   const [bidSalary, setBidSalary] = useState('');
   const [bidLength, setBidLength] = useState('3');
   const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState('');
   const [now, setNow] = useState(Date.now());
 
   async function load() {
@@ -870,7 +871,7 @@ function WarRoom({ leagueId, franchise, minSalary }) {
     const [capRes, playersRes, auctionsRes, offersRes, contractsRes] = await Promise.all([
       supabase.rpc('can_afford', { p_franchise_id: franchise.id, p_offer_salary: minSalary, p_offer_length: 1 }),
       supabase.from('players').select('id, full_name, positions').order('full_name'),
-      supabase.from('auctions').select('id, player_id, status, ends_at, phase').eq('league_id', leagueId).neq('status', 'closed'),
+      supabase.from('auctions').select('id, player_id, status, ends_at, phase, incumbent_franchise_id, winner_franchise_id, winner_salary_m, winner_length_years, match_deadline').eq('league_id', leagueId).neq('status', 'closed'),
       supabase.from('contract_offers').select('id, player_id, offer_salary_m, offer_length_years').eq('franchise_id', franchise.id).eq('status', 'pending'),
       supabase.from('contracts').select('player_id, franchise_id').eq('league_id', leagueId).eq('status', 'active')
     ]);
@@ -929,26 +930,133 @@ function WarRoom({ leagueId, franchise, minSalary }) {
     await load();
   }
 
+  async function resolveNow() {
+    setBusy(true);
+    setError('');
+    const { data, error: rErr } = await supabase.rpc('resolve_due_auctions');
+    setBusy(false);
+    if (rErr) { setError(rErr.message); return; }
+    setNotice(`Resolved ${data} auction${data === 1 ? '' : 's'}.`);
+    await load();
+  }
+
+  async function submitMatch(auctionId, match) {
+    setBusy(true);
+    setError('');
+    const { error: mErr } = await supabase.rpc('decide_match', { p_auction_id: auctionId, p_match: match });
+    setBusy(false);
+    if (mErr) { setError(mErr.message); return; }
+    setNotice(match ? 'Player matched and kept.' : 'Declined — player released to the winner.');
+    await load();
+  }
+
   if (loading) {
     return <Panel eyebrow="War Room" title="Loading…"><p className="muted">Pulling your cap and the player pool.</p></Panel>;
   }
 
   const money = (v) => (v === null || v === undefined ? '—' : `$${Number(v).toFixed(1)}m`);
+  const playersById = {};
+  players.forEach((p) => { playersById[p.id] = p; });
+  const myMatches = Object.values(auctions).filter((a) => a.status === 'awaiting_match' && a.incumbent_franchise_id === franchise.id);
+
+  function renderPlayer(player) {
+    const offer = myOffers[player.id];
+    const auction = auctions[player.id];
+    const isOpen = bidFor === player.id;
+    const rosterHolder = rostered[player.id];
+    const mineRostered = rosterHolder && rosterHolder === franchise.id;
+    const otherRostered = rosterHolder && rosterHolder !== franchise.id;
+
+    // Blind-safe state precedence.
+    let state = 'available';
+    if (mineRostered) state = 'mine';
+    else if (otherRostered) state = 'rostered';
+    else if (offer) state = 'bidding';
+    else if (auction) state = 'active';
+
+    const total = (Number(bidSalary) || 0) * (Number(bidLength) || 0);
+
+    return (
+      <div className={`player-row state-${state}`} key={player.id}>
+        <div className="player-main">
+          <div className="player-name">
+            <strong>{player.full_name}</strong>
+            <span className="player-pos">{(player.positions || []).join(' / ')}</span>
+          </div>
+          <div className="player-state">
+            {offer && <span className="my-bid">Your bid: ${Number(offer.offer_salary_m).toFixed(1)}m/yr · ${(Number(offer.offer_salary_m) * offer.offer_length_years).toFixed(1)}m total · {offer.offer_length_years}yr</span>}
+            {mineRostered && <span className="my-bid">On your roster</span>}
+            {otherRostered && <span className="muted">Signed elsewhere</span>}
+            {auction && !rosterHolder && <span className="auction-timer">{fmtRemaining(auction.ends_at, now)}</span>}
+            {!rosterHolder && <button className="text-btn" onClick={() => (isOpen ? setBidFor(null) : openBid(player))}>{offer ? 'Raise' : 'Bid'}</button>}
+          </div>
+        </div>
+        {isOpen && !rosterHolder && (
+          <div className="bid-form">
+            <Field label="Annual salary ($m)" type="number" value={bidSalary} onChange={setBidSalary} helper={`Cap hit each year. Total value: $${total.toFixed(1)}m over ${bidLength}yr`} />
+            <SelectField label="Years" value={bidLength} onChange={setBidLength}>
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+            </SelectField>
+            <div className="bid-actions">
+              <PrimaryButton onClick={() => submitBid(player.id)} disabled={busy}>{busy ? 'Placing…' : 'Place Bid'}</PrimaryButton>
+              <SecondaryButton onClick={() => setBidFor(null)}>Cancel</SecondaryButton>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // On the clock → Live Auctions (soonest first). Everyone else → the pool.
+  const livePlayers = players
+    .filter((p) => auctions[p.id])
+    .sort((a, b) => new Date(auctions[a.id].ends_at) - new Date(auctions[b.id].ends_at));
+  const poolPlayers = players.filter((p) => !auctions[p.id]);
 
   return (
     <>
       <section className="dash-card warroom-cap">
-        <div className="eyebrow">War Room · {franchise.name}</div>
+        <div className="warroom-cap-head">
+          <div className="eyebrow">War Room · {franchise.name}</div>
+          {isCommissioner && (
+            <button className="text-btn resolve-btn" onClick={resolveNow} disabled={busy}>{busy ? 'Resolving…' : 'Resolve now'}</button>
+          )}
+        </div>
         <div className="warroom-cap-grid">
           <div><span>Cap</span><strong>{money(cap?.cap)}</strong></div>
           <div><span>Payroll</span><strong>{money(cap?.payroll)}</strong></div>
           <div><span>Pending Bids</span><strong>{money(cap?.pending_sum)}</strong></div>
           <div><span>Max Bid</span><strong className="warroom-maxbid">{money(cap?.max_bid)}</strong></div>
         </div>
-        <p className="muted warroom-note">Bids are blind — you only see your own. Auctions run 24h from the first bid. Winning and awarding come with resolution (next build).</p>
+        <p className="muted warroom-note">Bids are blind — you only see your own. Auctions run 24h from the first bid.</p>
       </section>
 
+      {notice && <div className="warroom-notice">{notice}</div>}
       {error && <div className="warroom-error">{error}</div>}
+
+      {myMatches.length > 0 && (
+        <Panel eyebrow="Decision required" title={`Match window (${myMatches.length})`}>
+          <div className="player-list">
+            {myMatches.map((a) => (
+              <div className="player-row state-active" key={a.id}>
+                <div className="player-main">
+                  <div className="player-name">
+                    <strong>{playersById[a.player_id]?.full_name || 'Player'}</strong>
+                    <span className="player-pos">Winning offer: ${Number(a.winner_salary_m).toFixed(1)}m/yr · {a.winner_length_years}yr · {fmtRemaining(a.match_deadline, now)}</span>
+                  </div>
+                  <div className="bid-actions">
+                    <PrimaryButton onClick={() => submitMatch(a.id, true)} disabled={busy}>Match &amp; keep</PrimaryButton>
+                    <SecondaryButton onClick={() => submitMatch(a.id, false)} disabled={busy}>Decline</SecondaryButton>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
 
       <div className="warroom-legend">
         <span className="legend-item legend-mine">On your roster</span>
@@ -957,58 +1065,17 @@ function WarRoom({ leagueId, franchise, minSalary }) {
         <span className="legend-item legend-rostered">On another team</span>
       </div>
 
-      <Panel eyebrow="Players" title="Player pool">
+      {livePlayers.length > 0 && (
+        <Panel eyebrow="On the clock" title={`Live auctions (${livePlayers.length})`}>
+          <div className="player-list">
+            {livePlayers.map((player) => renderPlayer(player))}
+          </div>
+        </Panel>
+      )}
+
+      <Panel eyebrow="Players" title={`Player pool (${poolPlayers.length})`}>
         <div className="player-list">
-          {players.map((player) => {
-            const offer = myOffers[player.id];
-            const auction = auctions[player.id];
-            const isOpen = bidFor === player.id;
-            const rosterHolder = rostered[player.id];
-            const mineRostered = rosterHolder && rosterHolder === franchise.id;
-            const otherRostered = rosterHolder && rosterHolder !== franchise.id;
-
-            // Blind-safe state precedence.
-            let state = 'available';
-            if (mineRostered) state = 'mine';
-            else if (otherRostered) state = 'rostered';
-            else if (offer) state = 'bidding';
-            else if (auction) state = 'active';
-
-            const total = (Number(bidSalary) || 0) * (Number(bidLength) || 0);
-
-            return (
-              <div className={`player-row state-${state}`} key={player.id}>
-                <div className="player-main">
-                  <div className="player-name">
-                    <strong>{player.full_name}</strong>
-                    <span className="player-pos">{(player.positions || []).join(' / ')}</span>
-                  </div>
-                  <div className="player-state">
-                    {offer && <span className="my-bid">Your bid: ${Number(offer.offer_salary_m).toFixed(1)}m/yr · ${(Number(offer.offer_salary_m) * offer.offer_length_years).toFixed(1)}m total · {offer.offer_length_years}yr</span>}
-                    {mineRostered && <span className="my-bid">On your roster</span>}
-                    {otherRostered && <span className="muted">Signed elsewhere</span>}
-                    {auction && !rosterHolder && <span className="auction-timer">{fmtRemaining(auction.ends_at, now)}</span>}
-                    {!rosterHolder && <button className="text-btn" onClick={() => (isOpen ? setBidFor(null) : openBid(player))}>{offer ? 'Raise' : 'Bid'}</button>}
-                  </div>
-                </div>
-                {isOpen && !rosterHolder && (
-                  <div className="bid-form">
-                    <Field label="Annual salary ($m)" type="number" value={bidSalary} onChange={setBidSalary} helper={`Cap hit each year. Total value: $${total.toFixed(1)}m over ${bidLength}yr`} />
-                    <SelectField label="Years" value={bidLength} onChange={setBidLength}>
-                      <option value="1">1</option>
-                      <option value="2">2</option>
-                      <option value="3">3</option>
-                      <option value="4">4</option>
-                    </SelectField>
-                    <div className="bid-actions">
-                      <PrimaryButton onClick={() => submitBid(player.id)} disabled={busy}>{busy ? 'Placing…' : 'Place Bid'}</PrimaryButton>
-                      <SecondaryButton onClick={() => setBidFor(null)}>Cancel</SecondaryButton>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {poolPlayers.map((player) => renderPlayer(player))}
         </div>
       </Panel>
     </>
