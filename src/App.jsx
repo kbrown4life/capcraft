@@ -492,7 +492,7 @@ function Dashboard({ user, isSignedIn, leagues, setRoute, openLeague }) {
   );
 }
 
-const LEAGUE_NAV = ['Overview', 'My Franchise', 'Standings', 'Schedule', 'League Feed', 'Members', 'History', 'Settings'];
+const LEAGUE_NAV = ['Overview', 'War Room', 'My Franchise', 'Standings', 'Schedule', 'League Feed', 'Members', 'History', 'Settings'];
 
 const STATUS_LABELS = {
   setup: 'Setup',
@@ -698,6 +698,12 @@ function LeagueDetail({ leagueId, userId, setRoute }) {
             : <Panel eyebrow="My Franchise" title="No franchise here"><p className="muted">You do not own a franchise in this league.</p></Panel>
         )}
 
+        {tab === 'War Room' && (
+          myFranchise
+            ? <WarRoom leagueId={league.id} franchise={myFranchise} minSalary={settings ? Number(settings.minimum_salary_m) : 2.5} />
+            : <Panel eyebrow="War Room" title="No franchise here"><p className="muted">You need a franchise in this league to bid.</p></Panel>
+        )}
+
         {tab === 'Members' && (
           <Panel eyebrow="League" title={`Members (${members.length})`}>
             <table className="data-table members-table">
@@ -833,5 +839,151 @@ function DashCard({ eyebrow, children, pending, className = '' }) {
       {children}
       {pending && <p className="dash-pending">{pending}</p>}
     </section>
+  );
+}
+
+function fmtRemaining(endsAt, now) {
+  const ms = new Date(endsAt).getTime() - now;
+  if (ms <= 0) return 'ended';
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  if (h >= 1) return `${h}h ${m}m left`;
+  return `${m}m left`;
+}
+
+function WarRoom({ leagueId, franchise, minSalary }) {
+  const [cap, setCap] = useState(null);
+  const [players, setPlayers] = useState([]);
+  const [auctions, setAuctions] = useState({});
+  const [myOffers, setMyOffers] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [bidFor, setBidFor] = useState(null);
+  const [bidSalary, setBidSalary] = useState('');
+  const [bidLength, setBidLength] = useState('3');
+  const [busy, setBusy] = useState(false);
+  const [now, setNow] = useState(Date.now());
+
+  async function load() {
+    setError('');
+    const [capRes, playersRes, auctionsRes, offersRes] = await Promise.all([
+      supabase.rpc('can_afford', { p_franchise_id: franchise.id, p_offer_salary: minSalary, p_offer_length: 1 }),
+      supabase.from('players').select('id, full_name, positions').order('full_name'),
+      supabase.from('auctions').select('id, player_id, status, ends_at, phase').eq('league_id', leagueId).neq('status', 'closed'),
+      supabase.from('contract_offers').select('id, player_id, offer_salary_m, offer_length_years').eq('franchise_id', franchise.id).eq('status', 'pending')
+    ]);
+
+    if (capRes.error) setError(capRes.error.message);
+    else setCap(capRes.data);
+    if (!playersRes.error) setPlayers(playersRes.data || []);
+    const aMap = {};
+    (auctionsRes.data || []).forEach((a) => { aMap[a.player_id] = a; });
+    setAuctions(aMap);
+    const oMap = {};
+    (offersRes.data || []).forEach((o) => { oMap[o.player_id] = o; });
+    setMyOffers(oMap);
+    setLoading(false);
+  }
+
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [leagueId, franchise.id]);
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(t);
+  }, []);
+
+  function openBid(player) {
+    const existing = myOffers[player.id];
+    setBidFor(player.id);
+    setBidSalary(existing ? String(existing.offer_salary_m) : String(minSalary));
+    setBidLength(existing ? String(existing.offer_length_years) : '3');
+    setError('');
+  }
+
+  async function submitBid(playerId) {
+    setBusy(true);
+    setError('');
+    const salary = Number(bidSalary);
+    if (!Number.isFinite(salary) || salary <= 0) {
+      setError('Enter a valid salary.');
+      setBusy(false);
+      return;
+    }
+    const { error: bidError } = await supabase.rpc('place_bid', {
+      p_franchise_id: franchise.id,
+      p_player_id: playerId,
+      p_offer_salary: salary,
+      p_offer_length: Number(bidLength)
+    });
+    if (bidError) {
+      setError(bidError.message);
+      setBusy(false);
+      return;
+    }
+    setBidFor(null);
+    setBusy(false);
+    await load();
+  }
+
+  if (loading) {
+    return <Panel eyebrow="War Room" title="Loading…"><p className="muted">Pulling your cap and the player pool.</p></Panel>;
+  }
+
+  const money = (v) => (v === null || v === undefined ? '—' : `$${Number(v).toFixed(1)}m`);
+
+  return (
+    <>
+      <section className="dash-card warroom-cap">
+        <div className="eyebrow">War Room · {franchise.name}</div>
+        <div className="warroom-cap-grid">
+          <div><span>Cap</span><strong>{money(cap?.cap)}</strong></div>
+          <div><span>Payroll</span><strong>{money(cap?.payroll)}</strong></div>
+          <div><span>Pending Bids</span><strong>{money(cap?.pending_sum)}</strong></div>
+          <div><span>Max Bid</span><strong className="warroom-maxbid">{money(cap?.max_bid)}</strong></div>
+        </div>
+        <p className="muted warroom-note">Bids are blind — you only see your own. Auctions run 24h from the first bid. Winning and awarding come with resolution (next build).</p>
+      </section>
+
+      {error && <div className="warroom-error">{error}</div>}
+
+      <Panel eyebrow="Players" title="Available to bid">
+        <div className="player-list">
+          {players.map((player) => {
+            const offer = myOffers[player.id];
+            const auction = auctions[player.id];
+            const isOpen = bidFor === player.id;
+            return (
+              <div className="player-row" key={player.id}>
+                <div className="player-main">
+                  <div className="player-name">
+                    <strong>{player.full_name}</strong>
+                    <span className="player-pos">{(player.positions || []).join(' / ')}</span>
+                  </div>
+                  <div className="player-state">
+                    {offer && <span className="my-bid">Your bid: ${Number(offer.offer_salary_m).toFixed(1)}m · {offer.offer_length_years}yr</span>}
+                    {auction && <span className="auction-timer">{fmtRemaining(auction.ends_at, now)}</span>}
+                    <button className="text-btn" onClick={() => (isOpen ? setBidFor(null) : openBid(player))}>{offer ? 'Raise' : 'Bid'}</button>
+                  </div>
+                </div>
+                {isOpen && (
+                  <div className="bid-form">
+                    <Field label="Salary ($m)" type="number" value={bidSalary} onChange={setBidSalary} />
+                    <SelectField label="Years" value={bidLength} onChange={setBidLength}>
+                      <option value="1">1</option>
+                      <option value="2">2</option>
+                      <option value="3">3</option>
+                      <option value="4">4</option>
+                    </SelectField>
+                    <div className="bid-actions">
+                      <PrimaryButton onClick={() => submitBid(player.id)} disabled={busy}>{busy ? 'Placing…' : 'Place Bid'}</PrimaryButton>
+                      <SecondaryButton onClick={() => setBidFor(null)}>Cancel</SecondaryButton>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </Panel>
+    </>
   );
 }

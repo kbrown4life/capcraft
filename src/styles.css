@@ -370,3 +370,30 @@ code { font-family: var(--mono); background: var(--soft); padding: 2px 4px; }
   .command-grid { grid-template-columns: 1fr; }
   .dash-card.span-2 { grid-column: span 1; }
 }
+
+/* War Room (Phase C, step 4) */
+.warroom-cap { border-top: 2px solid var(--franchise, var(--strong-line)); margin-bottom: 16px; }
+.warroom-cap-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 8px; }
+.warroom-cap-grid > div { display: flex; flex-direction: column; gap: 3px; }
+.warroom-cap-grid span { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .07em; }
+.warroom-cap-grid strong { font-family: var(--mono); font-size: 22px; }
+.warroom-maxbid { color: var(--franchise, var(--ink)); }
+.warroom-note { margin: 12px 0 0; font-size: 12px; line-height: 1.45; }
+.warroom-error { border: 1px solid var(--danger, #8c2b2b); background: #fff5f5; color: #8c2b2b; padding: 10px 12px; margin-bottom: 14px; font-size: 14px; }
+.player-list { display: flex; flex-direction: column; }
+.player-row { border-bottom: 1px solid var(--line); padding: 10px 0; }
+.player-row:last-child { border-bottom: 0; }
+.player-main { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.player-name { display: flex; flex-direction: column; gap: 2px; }
+.player-pos { color: var(--muted); font-size: 12px; letter-spacing: .04em; }
+.player-state { display: flex; align-items: center; gap: 14px; }
+.my-bid { font-family: var(--mono); font-size: 13px; color: var(--franchise, var(--ink)); }
+.auction-timer { font-size: 12px; color: var(--muted); font-family: var(--mono); }
+.bid-form { display: flex; align-items: flex-end; gap: 12px; padding: 12px 0 4px; flex-wrap: wrap; }
+.bid-form .field { margin: 0; min-width: 120px; }
+.bid-actions { display: flex; gap: 8px; }
+
+@media (max-width: 640px) {
+  .warroom-cap-grid { grid-template-columns: repeat(2, 1fr); }
+  .player-main { flex-direction: column; align-items: flex-start; gap: 6px; }
+}
