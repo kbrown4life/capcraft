@@ -492,7 +492,7 @@ function Dashboard({ user, isSignedIn, leagues, setRoute, openLeague }) {
   );
 }
 
-const LEAGUE_NAV = ['Overview', 'War Room', 'My Franchise', 'Standings', 'Schedule', 'League Feed', 'Members', 'History', 'Settings'];
+const LEAGUE_NAV = ['Overview', 'War Room', 'Rosters', 'My Franchise', 'Standings', 'Schedule', 'League Feed', 'Members', 'History', 'Settings'];
 
 const STATUS_LABELS = {
   setup: 'Setup',
@@ -704,6 +704,10 @@ function LeagueDetail({ leagueId, userId, setRoute }) {
             : <Panel eyebrow="War Room" title="No franchise here"><p className="muted">You need a franchise in this league to bid.</p></Panel>
         )}
 
+        {tab === 'Rosters' && (
+          <LeagueRosters leagueId={league.id} settings={settings} myFranchiseId={myFranchise?.id} />
+        )}
+
         {tab === 'Members' && (
           <Panel eyebrow="League" title={`Members (${members.length})`}>
             <table className="data-table members-table">
@@ -763,6 +767,117 @@ function SwatchRow({ label, value, onChange }) {
         ))}
       </div>
     </div>
+  );
+}
+
+function LeagueRosters({ leagueId, settings, myFranchiseId }) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [franchises, setFranchises] = useState([]);
+  const [contracts, setContracts] = useState([]);
+  const [players, setPlayers] = useState([]);
+  const [open, setOpen] = useState({}); // franchiseId -> expanded?
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      setError('');
+      const [fRes, cRes, pRes] = await Promise.all([
+        supabase.from('franchises').select('id, name, primary_color, secondary_color, monogram').eq('league_id', leagueId),
+        supabase.from('contracts').select('player_id, franchise_id, salary_m, length_years').eq('league_id', leagueId).eq('status', 'active'),
+        supabase.from('players').select('id, full_name, positions')
+      ]);
+      if (cancelled) return;
+      const firstErr = fRes.error || cRes.error || pRes.error;
+      if (firstErr) { setError(firstErr.message); setLoading(false); return; }
+      setFranchises(fRes.data || []);
+      setContracts(cRes.data || []);
+      setPlayers(pRes.data || []);
+      setLoading(false);
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [leagueId]);
+
+  if (loading) {
+    return <Panel eyebrow="Rosters" title="Loading…"><p className="muted">Pulling every franchise's roster and cap.</p></Panel>;
+  }
+  if (error) {
+    return <Panel eyebrow="Rosters" title="Could not load rosters"><p className="muted">{error}</p></Panel>;
+  }
+
+  const cap = Number(settings?.salary_cap_m ?? 0);
+  const rosterSize = settings?.roster_size ?? null;
+  const playersById = {};
+  players.forEach((p) => { playersById[p.id] = p; });
+
+  const rows = franchises.map((f) => {
+    const signed = contracts
+      .filter((c) => c.franchise_id === f.id)
+      .map((c) => ({ ...c, player: playersById[c.player_id] }))
+      .sort((a, b) => Number(b.salary_m) - Number(a.salary_m));
+    const payroll = signed.reduce((sum, c) => sum + Number(c.salary_m), 0);
+    return {
+      franchise: f,
+      signed,
+      payroll,
+      slots: signed.length,
+      space: cap - payroll,
+      isMine: f.id === myFranchiseId
+    };
+  }).sort((a, b) => {
+    if (a.isMine !== b.isMine) return a.isMine ? -1 : 1;
+    return b.payroll - a.payroll;
+  });
+
+  const isOpen = (id) => (id in open ? open[id] : id === myFranchiseId);
+  const toggle = (id) => setOpen((prev) => ({ ...prev, [id]: !isOpen(id) }));
+
+  return (
+    <Panel eyebrow="Rosters" title="Around the League">
+      <p className="muted" style={{ marginTop: '-0.25rem' }}>
+        Cap space is committed space — cap minus signed salaries. Live bids and reservations stay private to each team.
+      </p>
+      <div className="roster-list">
+        {rows.map(({ franchise: f, signed, payroll, slots, space, isMine }) => (
+          <div key={f.id} className={isMine ? 'roster-card mine' : 'roster-card'}>
+            <button type="button" className="roster-card-head" onClick={() => toggle(f.id)}>
+              <MonogramBadge monogram={f.monogram} primary={f.primary_color} secondary={f.secondary_color} fallback={f.name} small />
+              <span className="roster-card-name">{f.name}</span>
+              {isMine && <span className="eyebrow roster-you">You</span>}
+              <span className="roster-card-stats">
+                <span className="muted">{rosterSize ? `${slots} / ${rosterSize}` : slots} slots</span>
+                <span className="muted">Payroll {formatMoney(payroll)}</span>
+                <span className={space < 0 ? 'roster-space over' : 'roster-space'}>{formatMoney(space)} space</span>
+                <span className="roster-caret" aria-hidden>{isOpen(f.id) ? '\u25be' : '\u25b8'}</span>
+              </span>
+            </button>
+            {isOpen(f.id) && (
+              <div className="roster-card-body">
+                {signed.length === 0 ? (
+                  <p className="muted">No players signed yet.</p>
+                ) : (
+                  <table className="data-table">
+                    <thead><tr><th>Player</th><th>Pos</th><th className="num">Salary</th><th className="num">Yrs</th></tr></thead>
+                    <tbody>
+                      {signed.map((c) => (
+                        <tr key={c.player_id}>
+                          <td>{c.player?.full_name || '\u2014'}</td>
+                          <td>{(c.player?.positions || []).join(', ')}</td>
+                          <td className="num">{formatMoney(c.salary_m)}</td>
+                          <td className="num">{c.length_years}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </Panel>
   );
 }
 
