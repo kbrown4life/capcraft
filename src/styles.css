@@ -421,3 +421,35 @@ code { font-family: var(--mono); background: var(--soft); padding: 2px 4px; }
 .warroom-notice { border: 1px solid #0f6b3f; background: #f2f8f4; color: #0f6b3f; padding: 10px 12px; margin-bottom: 14px; font-size: 14px; }
 
 .bid-error { flex-basis: 100%; color: #8c2b2b; background: #fff5f5; border: 1px solid #8c2b2b; padding: 8px 10px; font-size: 13px; margin-top: 4px; }
+
+/* Rosters tab — around-the-league cards */
+.roster-list { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+.roster-card { border: 1px solid var(--line); background: #fffdf7; }
+.roster-card.mine { border-color: var(--ink); }
+.roster-card-head {
+  width: 100%; display: flex; align-items: center; gap: 10px;
+  padding: 11px 13px; background: transparent; border: 0; cursor: pointer;
+  text-align: left; color: var(--ink); font: inherit;
+}
+.roster-card.mine .roster-card-head { background: rgba(23, 23, 19, 0.035); }
+.roster-card-name { font-weight: 600; }
+.roster-you { opacity: 0.6; }
+.roster-card-stats { margin-left: auto; display: flex; align-items: baseline; gap: 18px; font-family: var(--mono); font-size: 13px; }
+.roster-space { font-weight: 600; }
+.roster-space.over { color: #b4453a; }
+.roster-caret { opacity: 0.5; width: 12px; text-align: center; }
+.roster-card-body { padding: 0 13px 11px; }
+.roster-card-body .data-table { margin-top: 2px; }
+@media (max-width: 640px) {
+  .roster-card-head { flex-wrap: wrap; }
+  .roster-card-stats { margin-left: 0; width: 100%; gap: 12px; justify-content: space-between; }
+}
+
+/* War Room draft controls + closed-bidding banner */
+.warroom-head-actions { display: flex; align-items: center; gap: 10px; }
+.warroom-head-actions .text-btn { border: 1px solid var(--line); padding: 5px 10px; }
+.warroom-head-actions .text-btn:hover:not(:disabled) { background: var(--soft); }
+.warroom-closed {
+  border: 1px solid var(--line); background: #fff8e6;
+  padding: 11px 13px; margin-bottom: 14px; font-size: 14px;
+}

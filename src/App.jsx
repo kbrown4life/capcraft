@@ -532,7 +532,7 @@ function LeagueDetail({ leagueId, userId, setRoute }) {
           id, name, slug, status, created_at, commissioner_id,
           league_settings ( number_of_teams, salary_cap_m, minimum_salary_m, roster_size, signing_bonus_pool_m, buyout_percent, playoff_teams, draft_order ),
           league_categories ( category_key, sort_order ),
-          franchises ( id, name, abbreviation, founded_season, franchise_owners ( role, active, user_id, profiles ( username, display_name ) ) )
+          franchises ( id, name, abbreviation, founded_season, primary_color, secondary_color, monogram, franchise_owners ( role, active, user_id, profiles ( username, display_name ) ) )
         `)
         .eq('id', leagueId)
         .maybeSingle();
@@ -700,7 +700,7 @@ function LeagueDetail({ leagueId, userId, setRoute }) {
 
         {tab === 'War Room' && (
           myFranchise
-            ? <WarRoom leagueId={league.id} franchise={myFranchise} minSalary={settings ? Number(settings.minimum_salary_m) : 2.5} isCommissioner={league.commissioner_id === userId} />
+            ? <WarRoom leagueId={league.id} franchise={myFranchise} minSalary={settings ? Number(settings.minimum_salary_m) : 2.5} isCommissioner={league.commissioner_id === userId} status={league.status} onStatusChange={(s) => setLeague((prev) => ({ ...prev, status: s }))} />
             : <Panel eyebrow="War Room" title="No franchise here"><p className="muted">You need a franchise in this league to bid.</p></Panel>
         )}
 
@@ -966,7 +966,8 @@ function fmtRemaining(endsAt, now) {
   return `${m}m left`;
 }
 
-function WarRoom({ leagueId, franchise, minSalary, isCommissioner }) {
+function WarRoom({ leagueId, franchise, minSalary, isCommissioner, status, onStatusChange }) {
+  const biddable = status === 'startup_draft' || status === 'in_season';
   const [cap, setCap] = useState(null);
   const [players, setPlayers] = useState([]);
   const [auctions, setAuctions] = useState({});
@@ -1055,6 +1056,28 @@ function WarRoom({ leagueId, franchise, minSalary, isCommissioner }) {
     await load();
   }
 
+  async function startDraft() {
+    setBusy(true);
+    setError('');
+    const { error: e } = await supabase.rpc('start_draft', { p_league_id: leagueId });
+    setBusy(false);
+    if (e) { setError(e.message); return; }
+    setNotice('Draft started — bidding is open.');
+    if (onStatusChange) onStatusChange('startup_draft');
+    await load();
+  }
+
+  async function endDraft() {
+    setBusy(true);
+    setError('');
+    const { error: e } = await supabase.rpc('end_draft', { p_league_id: leagueId });
+    setBusy(false);
+    if (e) { setError(e.message); return; }
+    setNotice('Draft ended — the league is now in season.');
+    if (onStatusChange) onStatusChange('in_season');
+    await load();
+  }
+
   async function submitMatch(auctionId, match) {
     setBusy(true);
     setError('');
@@ -1103,10 +1126,10 @@ function WarRoom({ leagueId, franchise, minSalary, isCommissioner }) {
             {mineRostered && <span className="my-bid">On your roster</span>}
             {otherRostered && <span className="muted">Signed elsewhere</span>}
             {auction && !rosterHolder && <span className="auction-timer">{fmtRemaining(auction.ends_at, now)}</span>}
-            {!rosterHolder && <button className="text-btn" onClick={() => (isOpen ? setBidFor(null) : openBid(player))}>{offer ? 'Raise' : 'Bid'}</button>}
+            {!rosterHolder && biddable && <button className="text-btn" onClick={() => (isOpen ? setBidFor(null) : openBid(player))}>{offer ? 'Raise' : 'Bid'}</button>}
           </div>
         </div>
-        {isOpen && !rosterHolder && (
+        {isOpen && !rosterHolder && biddable && (
           <div className="bid-form">
             <Field label="Annual salary ($m)" type="number" value={bidSalary} onChange={setBidSalary} helper={`Cap hit each year. Total value: $${total.toFixed(1)}m over ${bidLength}yr`} />
             <SelectField label="Years" value={bidLength} onChange={setBidLength}>
@@ -1137,9 +1160,18 @@ function WarRoom({ leagueId, franchise, minSalary, isCommissioner }) {
       <section className="dash-card warroom-cap">
         <div className="warroom-cap-head">
           <div className="eyebrow">War Room · {franchise.name}</div>
-          {isCommissioner && (
-            <button className="text-btn resolve-btn" onClick={resolveNow} disabled={busy}>{busy ? 'Resolving…' : 'Resolve now'}</button>
-          )}
+          <div className="warroom-head-actions">
+            <StatusPill>{STATUS_LABELS[status] || status}</StatusPill>
+            {isCommissioner && status === 'setup' && (
+              <button className="text-btn" onClick={startDraft} disabled={busy}>{busy ? 'Working…' : 'Start Draft'}</button>
+            )}
+            {isCommissioner && status === 'startup_draft' && (
+              <button className="text-btn" onClick={endDraft} disabled={busy}>{busy ? 'Working…' : 'End Draft'}</button>
+            )}
+            {isCommissioner && (
+              <button className="text-btn resolve-btn" onClick={resolveNow} disabled={busy}>{busy ? 'Resolving…' : 'Resolve now'}</button>
+            )}
+          </div>
         </div>
         <div className="warroom-cap-grid">
           <div><span>Cap</span><strong>{money(cap?.cap)}</strong></div>
@@ -1152,6 +1184,16 @@ function WarRoom({ leagueId, franchise, minSalary, isCommissioner }) {
 
       {notice && <div className="warroom-notice">{notice}</div>}
       {error && <div className="warroom-error">{error}</div>}
+
+      {!biddable && (
+        <div className="warroom-closed">
+          {status === 'setup'
+            ? (isCommissioner
+                ? 'Bidding is closed. Start the draft to open bidding for every manager.'
+                : 'Bidding opens once the commissioner starts the draft.')
+            : `Bidding is closed while the league is in ${STATUS_LABELS[status] || status}.`}
+        </div>
+      )}
 
       {myMatches.length > 0 && (
         <Panel eyebrow="Decision required" title={`Match window (${myMatches.length})`}>
