@@ -51,6 +51,18 @@ export default function App() {
     return () => listener.subscription.unsubscribe();
   }, []);
 
+  async function refreshLeagues(uid) {
+    const userId = uid || session?.user?.id;
+    if (!isSupabaseConfigured || !userId) { setLeagues([]); return; }
+    const { data: leagueRows } = await supabase
+      .from('franchise_owners')
+      .select('franchise:franchises(id,name, league:leagues(id,name,slug,status))')
+      .eq('user_id', userId);
+    setLeagues((leagueRows || [])
+      .map((row) => row.franchise?.league)
+      .filter((l) => l && l.status !== 'archived'));
+  }
+
   useEffect(() => {
     async function loadProfileAndLeagues() {
       if (!isSupabaseConfigured || !session?.user) return;
@@ -75,11 +87,7 @@ export default function App() {
 
       setProfile(profileData);
       setProfileMissing(false);
-      const { data: leagueRows } = await supabase
-        .from('franchise_owners')
-        .select('franchise:franchises(id,name, league:leagues(id,name,slug))')
-        .eq('user_id', session.user.id);
-      setLeagues((leagueRows || []).map((row) => row.franchise?.league).filter(Boolean));
+      await refreshLeagues(session.user.id);
     }
     loadProfileAndLeagues();
   }, [session]);
@@ -105,7 +113,7 @@ export default function App() {
         {route === 'Create League' && <CreateLeague user={user} isSignedIn={isSignedIn} setRoute={setRoute} setMessage={setMessage} />}
         {route === 'Join League' && <JoinLeague user={user} isSignedIn={isSignedIn} setRoute={setRoute} setMessage={setMessage} />}
         {route === 'Dashboard' && <Dashboard user={user} isSignedIn={isSignedIn} leagues={leagues} setRoute={setRoute} openLeague={openLeague} />}
-        {route === 'League' && <LeagueDetail leagueId={activeLeagueId} userId={session?.user?.id} setRoute={setRoute} />}
+        {route === 'League' && <LeagueDetail leagueId={activeLeagueId} userId={session?.user?.id} setRoute={setRoute} onArchived={refreshLeagues} />}
       </Shell>
     </>
   );
@@ -492,7 +500,7 @@ function Dashboard({ user, isSignedIn, leagues, setRoute, openLeague }) {
   );
 }
 
-const LEAGUE_NAV = ['Overview', 'War Room', 'Rosters', 'My Franchise', 'Standings', 'Schedule', 'League Feed', 'Members', 'History', 'Settings'];
+const LEAGUE_NAV = ['Overview', 'War Room', 'Rosters', 'Rules', 'My Franchise', 'Standings', 'Schedule', 'League Feed', 'Members', 'History', 'Settings'];
 
 const STATUS_LABELS = {
   setup: 'Setup',
@@ -507,12 +515,14 @@ const TAB_PHASE_NOTE = {
   Standings: 'Category standings render once the fantasy engine lands (Phase 7).',
   Schedule: 'Weekly matchup scheduling is part of the fantasy engine (Phase 7).',
   'League Feed': 'A live feed reads from audit logs and notifications in a later phase.',
-  History: 'Permanent league and franchise history is Phase 6.',
-  Settings: 'Commissioner settings and rule edits come with the invite/admin phase.'
+  History: 'Permanent league and franchise history is Phase 6.'
 };
 
-function LeagueDetail({ leagueId, userId, setRoute }) {
+function LeagueDetail({ leagueId, userId, setRoute, onArchived }) {
   const [tab, setTab] = useState('Overview');
+  const [archiveConfirm, setArchiveConfirm] = useState('');
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  const [archiveError, setArchiveError] = useState('');
   const [league, setLeague] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -598,6 +608,19 @@ function LeagueDetail({ leagueId, userId, setRoute }) {
   // Accent = the viewing owner's franchise PRIMARY color (all palette primaries
   // are dark enough to read on the light cards). Secondary stays in the badge.
   const franchiseAccent = paletteByKey[myFranchise?.primary_color]?.primary || null;
+
+  const isCommissioner = Boolean(league && league.commissioner_id === userId);
+
+  async function archiveLeague() {
+    if (!league) return;
+    setArchiveBusy(true);
+    setArchiveError('');
+    const { error: aErr } = await supabase.rpc('archive_league', { p_league_id: league.id });
+    setArchiveBusy(false);
+    if (aErr) { setArchiveError(aErr.message); return; }
+    if (onArchived) await onArchived();
+    setRoute('Dashboard');
+  }
 
   // Patch identity into local state so the UI reflects a save without a refetch.
   const applyIdentity = (franchiseId, next) => {
@@ -708,6 +731,10 @@ function LeagueDetail({ leagueId, userId, setRoute }) {
           <LeagueRosters leagueId={league.id} settings={settings} myFranchiseId={myFranchise?.id} />
         )}
 
+        {tab === 'Rules' && (
+          <LeagueRules settings={settings} />
+        )}
+
         {tab === 'Members' && (
           <Panel eyebrow="League" title={`Members (${members.length})`}>
             <table className="data-table members-table">
@@ -728,6 +755,43 @@ function LeagueDetail({ leagueId, userId, setRoute }) {
               </tbody>
             </table>
           </Panel>
+        )}
+
+        {tab === 'Settings' && (
+          isCommissioner ? (
+            <Panel eyebrow="Settings" title="League settings">
+              <div className="danger-zone">
+                <h4>Delete league</h4>
+                <p className="muted">
+                  Archives “{league?.name}” and removes it from every member's list. Its data is
+                  retained, not permanently erased, and this can be reversed by an admin. Bidding and
+                  all league activity stop.
+                </p>
+                <p className="muted">Type the league name <strong>{league?.name}</strong> to confirm.</p>
+                <div className="danger-row">
+                  <input
+                    className="warroom-search"
+                    type="text"
+                    placeholder="League name"
+                    value={archiveConfirm}
+                    onChange={(e) => setArchiveConfirm(e.target.value)}
+                  />
+                  <button
+                    className="danger-btn"
+                    disabled={archiveBusy || archiveConfirm.trim() !== (league?.name || '').trim()}
+                    onClick={archiveLeague}
+                  >
+                    {archiveBusy ? 'Deleting…' : 'Delete league'}
+                  </button>
+                </div>
+                {archiveError && <div className="warroom-error">{archiveError}</div>}
+              </div>
+            </Panel>
+          ) : (
+            <Panel eyebrow="Settings" title="League settings">
+              <p className="muted">Only the commissioner can change league settings.</p>
+            </Panel>
+          )
         )}
 
         {TAB_PHASE_NOTE[tab] && (
@@ -766,6 +830,117 @@ function SwatchRow({ label, value, onChange }) {
           >{value === color.key ? '✓' : ''}</button>
         ))}
       </div>
+    </div>
+  );
+}
+
+function Beta() {
+  return <sup className="beta-flag" title="Not built yet in beta mode">*</sup>;
+}
+
+function LeagueRules({ settings }) {
+  const cap = settings?.salary_cap_m != null ? Number(settings.salary_cap_m) : 200;
+  const min = settings?.minimum_salary_m != null ? Number(settings.minimum_salary_m) : 2.5;
+  const roster = settings?.roster_size != null ? Number(settings.roster_size) : 15;
+  const teams = settings?.number_of_teams != null ? Number(settings.number_of_teams) : null;
+
+  return (
+    <div className="rules">
+      <Panel eyebrow="How CapCraft works" title="League Rules">
+        <p className="muted">
+          CapCraft is a salary-cap league. You run a franchise, sign players to multi-year contracts
+          through a blind-auction market, and manage a hard cap. Items marked <Beta /> are planned but
+          not built yet in beta mode.
+        </p>
+      </Panel>
+
+      <Panel eyebrow="The basics" title="Cap, roster & money">
+        <ul className="rules-list">
+          <li><strong>Salary cap:</strong> ${cap}M, hard. You can never commit past it.</li>
+          <li><strong>Minimum salary:</strong> ${min}M per year.</li>
+          <li><strong>Roster size:</strong> {roster} players.{teams ? ` League size: ${teams} franchises.` : ''}</li>
+          <li><strong>Money is an annual cap hit.</strong> A bid is the <em>per-year</em> salary. A 3-year, $10M bid counts $10M against your cap each year; total contract value is $30M (display only).</li>
+          <li><strong>Contracts are flat</strong> — the same salary every year. Per-year raises <Beta /> come later.</li>
+        </ul>
+      </Panel>
+
+      <Panel eyebrow="Free agency" title="The blind auction">
+        <p>Every signing goes through an auction — there is no direct-sign path. It works like this:</p>
+        <ul className="rules-list">
+          <li><strong>Blind bidding.</strong> You place a bid (per-year salary × years). You only ever see <em>your own</em> bids — never anyone else's.</li>
+          <li><strong>24-hour clock.</strong> The first bid on a player opens a 24-hour auction. Others can bid until the clock expires.</li>
+          <li><strong>You must be able to afford it.</strong> A bid is rejected if it exceeds your available cap (see below). Every open bid reserves cap until it resolves.</li>
+          <li><strong>Highest contract score wins</strong> when the clock hits zero. Ties go to the earliest bid.</li>
+        </ul>
+      </Panel>
+
+      <Panel eyebrow="How bids are ranked" title="Contract score">
+        <p>When an auction closes, the winning bid is the one with the highest <strong>contract score</strong>:</p>
+        <p className="rules-formula">score = Total + (Salary × 2.5) + (Years × 4)</p>
+        <p className="muted">
+          where Total = salary × years and Salary is the per-year figure. Longer, richer offers score
+          higher — so you can beat a higher annual salary with more years, and vice versa. Signing
+          bonuses <Beta /> will factor in later.
+        </p>
+      </Panel>
+
+      <Panel eyebrow="Your spending power" title="Available cap to bid">
+        <p>Your max bid isn't just cap minus payroll. It's:</p>
+        <p className="rules-formula">available = cap − payroll − pending bids − holds on your other empty spots</p>
+        <ul className="rules-list">
+          <li>Every empty roster spot holds the ${min}M minimum in reserve, so you can always fill your roster.</li>
+          <li>The spot you're bidding on releases its own hold.</li>
+          <li>Every bid you have live reserves its full salary until it wins or loses.</li>
+        </ul>
+      </Panel>
+
+      <Panel eyebrow="Keeping your own players" title="Incumbent match window">
+        <ul className="rules-list">
+          <li>When a player whose contract with you has expired <Beta /> draws an outside winning bid, you get a <strong>12-hour window to match</strong> the winning offer and keep them.</li>
+          <li>Match, and the player stays on your roster at those terms (you must have the cap for it). Decline or let the window lapse, and the outside team signs them.</li>
+          <li className="muted">The match mechanic is built and tested; the contract-expiry that triggers it in-season is not built yet <Beta />.</li>
+        </ul>
+      </Panel>
+
+      <Panel eyebrow="The season spine" title="Draft & league lifecycle">
+        <ul className="rules-list">
+          <li><strong>Setup → Startup Draft → In Season.</strong> The commissioner starts the draft, which opens bidding for everyone.</li>
+          <li><strong>The startup draft is the blind auction</strong> run on every player until rosters fill.</li>
+          <li><strong>Auto-advance:</strong> when every franchise's roster is full, the league flips to In Season automatically. The commissioner can also end the draft early.</li>
+          <li>Bidding is closed in Setup, Offseason <Beta />, and Archived leagues.</li>
+        </ul>
+      </Panel>
+
+      <Panel eyebrow="What rivals can see" title="Cap visibility">
+        <p className="muted">
+          On the Rosters tab you see every franchise's roster, payroll, and <strong>committed</strong> cap
+          space (cap − signed salaries). You do <em>not</em> see anyone's live bids or true remaining
+          bid power — that stays private, so the auction stays blind.
+        </p>
+      </Panel>
+
+      <Panel eyebrow="Planned — not in beta yet" title={<>In-season moves <Beta /></>}>
+        <ul className="rules-list">
+          <li><strong>Waiver pickups <Beta />:</strong> when a player is waived, a 24-hour window opens to bid on them (a mini blind auction).</li>
+          <li><strong>Instant signings <Beta />:</strong> outside of waivers, any free player can be signed instantly at the ${min}M minimum, as long as you have an open roster spot.</li>
+          <li><strong>Per-year raises <Beta />:</strong> contracts will support annual salary raises (currently flat).</li>
+          <li><strong>Signing bonuses <Beta />:</strong> a lifetime bonus pool that affects year-one cash, not the cap hit.</li>
+          <li><strong>Trades <Beta />:</strong> a trade machine with cap validation and commissioner approval.</li>
+        </ul>
+      </Panel>
+
+      <Panel eyebrow="Planned — not in beta yet" title={<>Scoring & competition <Beta /></>}>
+        <p>Head-to-head, category-based fantasy scoring <Beta />. The default nine categories:</p>
+        <p className="rules-formula">PTS · REB · AST · STL · BLK · 3PM · FG% · FT% · TO</p>
+        <ul className="rules-list">
+          <li>Weekly matchups, standings, daily lineups, playoffs, and a draft lottery are all part of the fantasy engine <Beta />.</li>
+          <li className="muted">Optional categories (double-doubles, triple-doubles, offensive/defensive rebounds, and more) can be enabled per league <Beta />.</li>
+        </ul>
+      </Panel>
+
+      <Panel eyebrow="Legend" title={null}>
+        <p className="muted"><Beta /> Not built yet in beta mode — planned for a later phase.</p>
+      </Panel>
     </div>
   );
 }
