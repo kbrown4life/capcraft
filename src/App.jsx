@@ -981,6 +981,7 @@ function WarRoom({ leagueId, franchise, minSalary, isCommissioner, status, onSta
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [now, setNow] = useState(Date.now());
+  const [query, setQuery] = useState('');
 
   async function load() {
     setError('');
@@ -1155,6 +1156,20 @@ function WarRoom({ leagueId, franchise, minSalary, isCommissioner, status, onSta
     .sort((a, b) => new Date(auctions[a.id].ends_at) - new Date(auctions[b.id].ends_at));
   const poolPlayers = players.filter((p) => !auctions[p.id]);
 
+  // Search filter — pure view filter over already-loaded players (name or position).
+  // Does not touch bids, cap, or blind-auction state.
+  const q = query.trim().toLowerCase();
+  const matchesQuery = (p) => {
+    if (!q) return true;
+    const name = (p.full_name || '').toLowerCase();
+    const pos = (p.positions || []).join(' ').toLowerCase();
+    return name.includes(q) || pos.includes(q);
+  };
+  const liveFiltered = livePlayers.filter(matchesQuery);
+  const poolFiltered = poolPlayers.filter(matchesQuery);
+  const matchCount = liveFiltered.length + poolFiltered.length;
+  const noMatches = q !== '' && matchCount === 0;
+
   return (
     <>
       <section className="dash-card warroom-cap">
@@ -1216,6 +1231,22 @@ function WarRoom({ leagueId, franchise, minSalary, isCommissioner, status, onSta
         </Panel>
       )}
 
+      <div className="warroom-search-bar">
+        <input
+          className="warroom-search"
+          type="text"
+          placeholder="Search players by name or position…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        {q !== '' && (
+          <>
+            <span className="warroom-search-count">{matchCount} match{matchCount === 1 ? '' : 'es'}</span>
+            <button className="text-btn" onClick={() => setQuery('')}>Clear</button>
+          </>
+        )}
+      </div>
+
       <div className="warroom-legend">
         <span className="legend-item legend-mine">On your roster</span>
         <span className="legend-item legend-bidding">Your bid in</span>
@@ -1223,19 +1254,27 @@ function WarRoom({ leagueId, franchise, minSalary, isCommissioner, status, onSta
         <span className="legend-item legend-rostered">On another team</span>
       </div>
 
-      {livePlayers.length > 0 && (
-        <Panel eyebrow="On the clock" title={`Live auctions (${livePlayers.length})`}>
+      {liveFiltered.length > 0 && (
+        <Panel eyebrow="On the clock" title={`Live auctions (${liveFiltered.length})`}>
           <div className="player-list">
-            {livePlayers.map((player) => renderPlayer(player))}
+            {liveFiltered.map((player) => renderPlayer(player))}
           </div>
         </Panel>
       )}
 
-      <Panel eyebrow="Players" title={`Player pool (${poolPlayers.length})`}>
-        <div className="player-list">
-          {poolPlayers.map((player) => renderPlayer(player))}
-        </div>
-      </Panel>
+      {poolFiltered.length > 0 && (
+        <Panel eyebrow="Players" title={q !== '' ? `Player pool (${poolFiltered.length} of ${poolPlayers.length})` : `Player pool (${poolPlayers.length})`}>
+          <div className="player-list">
+            {poolFiltered.map((player) => renderPlayer(player))}
+          </div>
+        </Panel>
+      )}
+
+      {noMatches && (
+        <Panel eyebrow="Players" title="No matches">
+          <p className="muted">No players match “{query}”. Try a name or a position (G, F, C).</p>
+        </Panel>
+      )}
     </>
   );
 }
