@@ -860,12 +860,13 @@ function LeagueRules({ settings }) {
           <li><strong>Minimum salary:</strong> ${min}M per year.</li>
           <li><strong>Roster size:</strong> {roster} players.{teams ? ` League size: ${teams} franchises.` : ''}</li>
           <li><strong>Money is an annual cap hit.</strong> A bid is the <em>per-year</em> salary. A 3-year, $10M bid counts $10M against your cap each year; total contract value is $30M (display only).</li>
+          <li><strong>Contract length:</strong> 1–4 years. There's no maximum salary — anything that fits under your cap.</li>
           <li><strong>Contracts are flat</strong> — the same salary every year. Per-year raises <Beta /> come later.</li>
         </ul>
       </Panel>
 
       <Panel eyebrow="Free agency" title="The blind auction">
-        <p>Every signing goes through an auction — there is no direct-sign path. It works like this:</p>
+        <p>Every signing currently runs through an auction — there's no direct-sign path yet (instant signings are planned <Beta />). It works like this:</p>
         <ul className="rules-list">
           <li><strong>Blind bidding.</strong> You place a bid (per-year salary × years). You only ever see <em>your own</em> bids — never anyone else's.</li>
           <li><strong>24-hour clock.</strong> The first bid on a player opens a 24-hour auction. Others can bid until the clock expires.</li>
@@ -908,6 +909,7 @@ function LeagueRules({ settings }) {
           <li><strong>The startup draft is the blind auction</strong> run on every player until rosters fill.</li>
           <li><strong>Auto-advance:</strong> when every franchise's roster is full, the league flips to In Season automatically. The commissioner can also end the draft early.</li>
           <li>Bidding is closed in Setup, Offseason <Beta />, and Archived leagues.</li>
+          <li><strong>Rookie draft <Beta />:</strong> a traditional (non-auction) draft with pre-slotted rookie-scale salaries, run separately from the startup auction.</li>
         </ul>
       </Panel>
 
@@ -921,10 +923,10 @@ function LeagueRules({ settings }) {
 
       <Panel eyebrow="Planned — not in beta yet" title={<>In-season moves <Beta /></>}>
         <ul className="rules-list">
-          <li><strong>Waiver pickups <Beta />:</strong> when a player is waived, a 24-hour window opens to bid on them (a mini blind auction).</li>
-          <li><strong>Instant signings <Beta />:</strong> outside of waivers, any free player can be signed instantly at the ${min}M minimum, as long as you have an open roster spot.</li>
-          <li><strong>Per-year raises <Beta />:</strong> contracts will support annual salary raises (currently flat).</li>
-          <li><strong>Signing bonuses <Beta />:</strong> a lifetime bonus pool that affects year-one cash, not the cap hit.</li>
+          <li><strong>Waivers <Beta />:</strong> when a player is waived, a 24-hour window opens for teams to bid on them — a mini blind auction. If no one claims them within 24 hours, they clear waivers.</li>
+          <li><strong>Instant signings <Beta />:</strong> once a player has cleared waivers (or was never waived), any team with an open roster spot can sign them instantly at the ${min}M minimum — no auction.</li>
+          <li><strong>Per-year raises <Beta />:</strong> contracts will offer 3%, 5%, or 8% annual raises (currently flat).</li>
+          <li><strong>Signing bonuses <Beta />:</strong> a $10M-per-year bonus pool that affects year-one cash, not the cap hit.</li>
           <li><strong>Trades <Beta />:</strong> a trade machine with cap validation and commissioner approval.</li>
         </ul>
       </Panel>
