@@ -1155,6 +1155,7 @@ function WarRoom({ leagueId, franchise, minSalary, isCommissioner, status, onSta
   const [bidFor, setBidFor] = useState(null);
   const [bidSalary, setBidSalary] = useState('');
   const [bidLength, setBidLength] = useState('3');
+  const [bidCounts, setBidCounts] = useState({});
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [now, setNow] = useState(Date.now());
@@ -1162,12 +1163,13 @@ function WarRoom({ leagueId, franchise, minSalary, isCommissioner, status, onSta
 
   async function load() {
     setError('');
-    const [capRes, playersRes, auctionsRes, offersRes, contractsRes] = await Promise.all([
+    const [capRes, playersRes, auctionsRes, offersRes, contractsRes, countsRes] = await Promise.all([
       supabase.rpc('can_afford', { p_franchise_id: franchise.id, p_offer_salary: minSalary, p_offer_length: 1 }),
       supabase.from('players').select('id, full_name, positions').order('full_name'),
       supabase.from('auctions').select('id, player_id, status, ends_at, phase, incumbent_franchise_id, winner_franchise_id, winner_salary_m, winner_length_years, match_deadline').eq('league_id', leagueId).neq('status', 'closed'),
       supabase.from('contract_offers').select('id, player_id, offer_salary_m, offer_length_years').eq('franchise_id', franchise.id).eq('status', 'pending'),
-      supabase.from('contracts').select('player_id, franchise_id').eq('league_id', leagueId).eq('status', 'active')
+      supabase.from('contracts').select('player_id, franchise_id').eq('league_id', leagueId).eq('status', 'active'),
+      supabase.rpc('auction_bid_counts', { p_league_id: leagueId })
     ]);
 
     if (capRes.error) setError(capRes.error.message);
@@ -1182,6 +1184,9 @@ function WarRoom({ leagueId, franchise, minSalary, isCommissioner, status, onSta
     const rMap = {};
     (contractsRes.data || []).forEach((c) => { rMap[c.player_id] = c.franchise_id; });
     setRostered(rMap);
+    const cMap = {};
+    (countsRes && countsRes.data ? countsRes.data : []).forEach((row) => { cMap[row.player_id] = row.bid_count; });
+    setBidCounts(cMap);
     setLoading(false);
   }
 
@@ -1221,6 +1226,19 @@ function WarRoom({ leagueId, franchise, minSalary, isCommissioner, status, onSta
     }
     setBidFor(null);
     setBusy(false);
+    await load();
+  }
+
+  async function withdrawBid(playerId) {
+    setBusy(true);
+    setError('');
+    const { error: wErr } = await supabase.rpc('withdraw_bid', {
+      p_franchise_id: franchise.id,
+      p_player_id: playerId
+    });
+    setBusy(false);
+    if (wErr) { setError(wErr.message); return; }
+    setNotice('Bid withdrawn — cap released.');
     await load();
   }
 
@@ -1303,8 +1321,10 @@ function WarRoom({ leagueId, franchise, minSalary, isCommissioner, status, onSta
             {offer && <span className="my-bid">Your bid: ${Number(offer.offer_salary_m).toFixed(1)}m/yr · ${(Number(offer.offer_salary_m) * offer.offer_length_years).toFixed(1)}m total · {offer.offer_length_years}yr</span>}
             {mineRostered && <span className="my-bid">On your roster</span>}
             {otherRostered && <span className="muted">Signed elsewhere</span>}
+            {auction && !rosterHolder && bidCounts[player.id] > 0 && <span className="bid-count">{bidCounts[player.id]} bidding</span>}
             {auction && !rosterHolder && <span className="auction-timer">{fmtRemaining(auction.ends_at, now)}</span>}
             {!rosterHolder && biddable && <button className="text-btn" onClick={() => (isOpen ? setBidFor(null) : openBid(player))}>{offer ? 'Raise' : 'Bid'}</button>}
+            {offer && auction && auction.status === 'open' && biddable && <button className="text-btn withdraw-btn" onClick={() => withdrawBid(player.id)} disabled={busy}>Withdraw</button>}
           </div>
         </div>
         {isOpen && !rosterHolder && biddable && (
